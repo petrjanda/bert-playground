@@ -1,4 +1,6 @@
-from tqdm import tqdm
+import multiprocessing.pool as mpool
+
+import tqdm
 
 import numpy as np
 import tensorflow_hub as hub
@@ -46,72 +48,77 @@ def convert_text_to_examples(texts, labels):
     return InputExamples
 
 
+class Processor:
+    def __init__(self, tokenizer, max_seq_length=256):
+        self._tokenizer = tokenizer
+        self._max_seq_length = max_seq_length
+
+    def convert_single_example(self, example):
+        """Converts a single `InputExample` into a single `InputFeatures`."""
+
+        if isinstance(example, PaddingInputExample):
+            input_ids = [0] * self._max_seq_length
+            input_mask = [0] * self._max_seq_length
+            segment_ids = [0] * self._max_seq_length
+            label = 0
+            return input_ids, input_mask, segment_ids, label
+
+        tokens_a = self._tokenizer.tokenize(example.text_a)
+        if len(tokens_a) > self._max_seq_length - 2:
+            tokens_a = tokens_a[0 : (self._max_seq_length - 2)]
+
+        tokens = []
+        segment_ids = []
+        tokens.append("[CLS]")
+        segment_ids.append(0)
+        for token in tokens_a:
+            tokens.append(token)
+            segment_ids.append(0)
+        tokens.append("[SEP]")
+        segment_ids.append(0)
+
+        input_ids = self._tokenizer.convert_tokens_to_ids(tokens)
+
+        # The mask has 1 for real tokens and 0 for padding tokens. Only real
+        # tokens are attended to.
+        input_mask = [1] * len(input_ids)
+
+        # Zero-pad up to the sequence length.
+        while len(input_ids) < self._max_seq_length:
+            input_ids.append(0)
+            input_mask.append(0)
+            segment_ids.append(0)
+
+        assert len(input_ids) == self._max_seq_length
+        assert len(input_mask) == self._max_seq_length
+        assert len(segment_ids) == self._max_seq_length
+
+        return input_ids, input_mask, segment_ids, example.label
+
 def convert_examples_to_features(tokenizer, examples, max_seq_length=256):
     """Convert a set of `InputExample`s to a list of `InputFeatures`."""
 
     input_ids, input_masks, segment_ids, labels = [], [], [], []
-    for example in tqdm(examples, desc="Converting examples to features"):
-        input_id, input_mask, segment_id, label = _convert_single_example(
-            tokenizer, example, max_seq_length
-        )
-        input_ids.append(input_id)
-        input_masks.append(input_mask)
-        segment_ids.append(segment_id)
-        labels.append(label)
-    return (
+    processor = Processor(tokenizer, max_seq_length)
+
+    with mpool.Pool(processes=8) as pool:
+        for input_id, input_mask, segment_id, label in tqdm.tqdm(pool.imap_unordered(processor.convert_single_example, examples, chunksize=50), total=len(examples), ascii=True):
+            input_ids.append(input_id)
+            input_masks.append(input_mask)
+            segment_ids.append(segment_id)
+            labels.append(label)
+
+    return [
         np.array(input_ids),
         np.array(input_masks),
-        np.array(segment_ids),
-        np.array(labels).reshape(-1, 1),
-    )
-
-
-def _convert_single_example(tokenizer, example, max_seq_length=256):
-    """Converts a single `InputExample` into a single `InputFeatures`."""
-
-    if isinstance(example, PaddingInputExample):
-        input_ids = [0] * max_seq_length
-        input_mask = [0] * max_seq_length
-        segment_ids = [0] * max_seq_length
-        label = 0
-        return input_ids, input_mask, segment_ids, label
-
-    tokens_a = tokenizer.tokenize(example.text_a)
-    if len(tokens_a) > max_seq_length - 2:
-        tokens_a = tokens_a[0 : (max_seq_length - 2)]
-
-    tokens = []
-    segment_ids = []
-    tokens.append("[CLS]")
-    segment_ids.append(0)
-    for token in tokens_a:
-        tokens.append(token)
-        segment_ids.append(0)
-    tokens.append("[SEP]")
-    segment_ids.append(0)
-
-    input_ids = tokenizer.convert_tokens_to_ids(tokens)
-
-    # The mask has 1 for real tokens and 0 for padding tokens. Only real
-    # tokens are attended to.
-    input_mask = [1] * len(input_ids)
-
-    # Zero-pad up to the sequence length.
-    while len(input_ids) < max_seq_length:
-        input_ids.append(0)
-        input_mask.append(0)
-        segment_ids.append(0)
-
-    assert len(input_ids) == max_seq_length
-    assert len(input_mask) == max_seq_length
-    assert len(segment_ids) == max_seq_length
-
-    return input_ids, input_mask, segment_ids, example.label
+        np.array(segment_ids)
+    ], np.array(labels).reshape(-1, 1)
 
 def create_tokenizer_from_hub_module(sess, bert_path):
     """Get the vocab file and casing info from the Hub module."""
     bert_module =  hub.Module(bert_path)
     tokenization_info = bert_module(signature="tokenization_info", as_dict=True)
+    
     vocab_file, do_lower_case = sess.run(
         [
             tokenization_info["vocab_file"],

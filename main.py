@@ -61,11 +61,7 @@ def download_and_load_datasets(force_download=False):
 # Reduce logging output.
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-print('Downloading ...')
 train_df, test_df = download_and_load_datasets()
-
-print('Downloading done')
-print(train_df.head())
 
 # Create datasets (Only take up to max_seq_length words for memory)
 train_text = train_df['sentence'].tolist()
@@ -87,10 +83,13 @@ train_examples = prep.convert_text_to_examples(train_text, train_label)
 test_examples = prep.convert_text_to_examples(test_text, test_label)
 
 # Convert to features
-(train_input_ids, train_input_masks, train_segment_ids, train_labels 
-) = prep.convert_examples_to_features(tokenizer, train_examples, max_seq_length=max_seq_length)
-(test_input_ids, test_input_masks, test_segment_ids, test_labels
-) = prep.convert_examples_to_features(tokenizer, test_examples, max_seq_length=max_seq_length)
+(train_input, train_labels) = prep.convert_examples_to_features(
+    tokenizer, train_examples, max_seq_length=max_seq_length
+)
+
+(test_input, test_labels) = prep.convert_examples_to_features(
+    tokenizer, test_examples, max_seq_length=max_seq_length
+)
 
 
 def initialize_vars(sess):
@@ -100,34 +99,24 @@ def initialize_vars(sess):
     K.set_session(sess)
 
 
-model = architecture.build_model(max_seq_length)
+model = architecture.build_model(bert_path, max_seq_length)
 
 # Instantiate variables
 initialize_vars(sess)
 
 model.fit(
-    [train_input_ids, train_input_masks, train_segment_ids], 
-    train_labels,
-    validation_data=([test_input_ids, test_input_masks, test_segment_ids], test_labels),
+    train_input, train_labels,
+    validation_data=(test_input, test_labels),
     epochs=1,
     batch_size=32
 )
 
-
 model.save('BertModel.h5')
-pre_save_preds = model.predict([test_input_ids[0:100], 
-                                test_input_masks[0:100], 
-                                test_segment_ids[0:100]]
-                              ) # predictions before we clear and reload model
 
 # Clear and load model
 model = None
-model = architecture.build_model(max_seq_length)
+model = architecture.build_model(bert_path, max_seq_length)
 initialize_vars(sess)
 model.load_weights('BertModel.h5')
 
-post_save_preds = model.predict([test_input_ids[0:100], 
-                                test_input_masks[0:100], 
-                                test_segment_ids[0:100]]
-                              ) # predictions after we clear and reload model
-all(pre_save_preds == post_save_preds) # Are they the same?
+post_save_preds = model.predict(test_input)

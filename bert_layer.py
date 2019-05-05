@@ -1,16 +1,18 @@
 import tensorflow as tf
 import tensorflow_hub as hub
+from tensorflow.keras import backend as K
 
 class BertLayer(tf.keras.layers.Layer):
-    def __init__(self, n_fine_tune_layers=10, **kwargs):
+    def __init__(self, bert_path, n_fine_tune_layers=10, **kwargs):
         self.n_fine_tune_layers = n_fine_tune_layers
         self.trainable = True
         self.output_size = 768
+        self._bert_path = bert_path
+
         super(BertLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.bert = hub.Module(
-            bert_path,
+        self.bert = hub.Module(self._bert_path,
             trainable=self.trainable,
             name="{}_module".format(self.name)
         )
