@@ -36,7 +36,27 @@ def initialize_vars(sess):
     sess.run(tf.tables_initializer())
     K.set_session(sess)
 
+
+callbacks = [
+    tf.keras.callbacks.ModelCheckpoint(
+        filepath='mymodel_{epoch}.h5',
+        load_weights_on_restart=False,
+        save_best_only=False,
+        save_freq=100,
+        monitor='val_loss',
+        verbose=1
+    ),
+
+    tf.keras.callbacks.TensorBoard(
+        log_dir='./logs',
+        histogram_freq=0,  # How often to log histogram visualizations
+        embeddings_freq=0,  # How often to log embedding visualizations
+        update_freq=32
+    )
+]
+
 model = architecture.build_model(bert_path, max_seq_length)
+print(model.summary())
 
 # Instantiate variables
 initialize_vars(sess)
@@ -45,6 +65,7 @@ model.fit(
     train_X, train_y,
     validation_data=(test_X, test_y),
     epochs=1,
+    callbacks=callbacks,
     batch_size=32
 )
 
