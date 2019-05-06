@@ -6,6 +6,53 @@ import numpy as np
 import tensorflow_hub as hub
 from bert.tokenization import FullTokenizer
 
+class InputExamples:
+    def __init__(self, X, y):
+        self._X = X
+        self._y = y
+
+    def to_features(self, processor):
+        """Convert a set of `InputExample`s to a list of `InputFeatures`."""
+
+        input_ids, input_masks, segment_ids, labels = [], [], [], []
+        examples = self._examples
+
+        with mpool.Pool(processes=8) as pool:
+            items = pool.imap_unordered(
+                processor.convert_single_example, examples, chunksize=50
+            )
+
+            queue = tqdm.tqdm(items, total=len(examples), ascii=True)
+
+            for input_id, input_mask, segment_id, label in queue:
+                input_ids.append(input_id)
+                input_masks.append(input_mask)
+                segment_ids.append(segment_id)
+                labels.append(label)
+
+        return [
+            np.array(input_ids),
+            np.array(input_masks),
+            np.array(segment_ids)
+        ], np.array(labels).reshape(-1, 1)
+
+    @property
+    def _examples(self):
+        """Create InputExamples"""
+        InputExamples = []
+
+        for text, label in zip(self._X, self._y):
+            InputExamples.append(InputExample(
+                guid=None, 
+                text_a=" ".join(text), 
+                text_b=None, 
+                label=label
+            ))
+
+        return InputExamples
+
+
+
 class PaddingInputExample(object):
     """Fake example so the num input examples is a multiple of the batch size.
   When running eval/predict on the TPU, we need to pad the number of examples
@@ -15,6 +62,8 @@ class PaddingInputExample(object):
   We use this class instead of `None` because treating `None` as padding
   battches could cause silent errors.
   """
+
+
 
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
@@ -34,21 +83,10 @@ class InputExample(object):
         self.text_a = text_a
         self.text_b = text_b
         self.label = label
+        
+        
 
-
-
-
-def convert_text_to_examples(texts, labels):
-    """Create InputExamples"""
-    InputExamples = []
-    for text, label in zip(texts, labels):
-        InputExamples.append(
-            InputExample(guid=None, text_a=" ".join(text), text_b=None, label=label)
-        )
-    return InputExamples
-
-
-class Processor:
+class InputExampleProcessor:
     def __init__(self, tokenizer, max_seq_length=256):
         self._tokenizer = tokenizer
         self._max_seq_length = max_seq_length
@@ -95,26 +133,7 @@ class Processor:
 
         return input_ids, input_mask, segment_ids, example.label
 
-def convert_examples_to_features(tokenizer, examples, max_seq_length=256):
-    """Convert a set of `InputExample`s to a list of `InputFeatures`."""
-
-    input_ids, input_masks, segment_ids, labels = [], [], [], []
-    processor = Processor(tokenizer, max_seq_length)
-
-    with mpool.Pool(processes=8) as pool:
-        for input_id, input_mask, segment_id, label in tqdm.tqdm(pool.imap_unordered(processor.convert_single_example, examples, chunksize=50), total=len(examples), ascii=True):
-            input_ids.append(input_id)
-            input_masks.append(input_mask)
-            segment_ids.append(segment_id)
-            labels.append(label)
-
-    return [
-        np.array(input_ids),
-        np.array(input_masks),
-        np.array(segment_ids)
-    ], np.array(labels).reshape(-1, 1)
-
-def create_tokenizer_from_hub_module(sess, bert_path):
+def load_tokenizer(sess, bert_path):
     """Get the vocab file and casing info from the Hub module."""
     bert_module =  hub.Module(bert_path)
     tokenization_info = bert_module(signature="tokenization_info", as_dict=True)
@@ -126,4 +145,7 @@ def create_tokenizer_from_hub_module(sess, bert_path):
         ]
     )
 
-    return FullTokenizer(vocab_file=vocab_file, do_lower_case=do_lower_case)
+    return FullTokenizer(
+        vocab_file=vocab_file, 
+        do_lower_case=do_lower_case
+    )
